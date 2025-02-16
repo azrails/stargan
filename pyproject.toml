@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "stargan-v2"
+version = "0.1.0"
+description = "Unoficial implementaition StarGAN-v2"
+authors = ["azrails"]
+license = "MIT"
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.10"
+torch = "^2.6.0"
+torchvision = "^0.21.0"
+hydra-core = "^1.3.2"
+typer = "^0.15.1"
+wandb = "^0.19.6"
+
+[tool.poetry.group.test]
+optional = true
+
+[tool.poetry.group.test.dependencies]
+pytest = "^8.3.4"
+flake8 = "^7.1.1"
+ipykernel = "^6.29.5"
+pre-commit = "^4.1.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[project.urls]
+repository = "https://github.com/azrails/stargan"
