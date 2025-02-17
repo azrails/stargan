@@ -1,0 +1,10 @@
+defaults:
+  - model: StarGAN
+  - writer: wandb
+
+trainer:
+  seed: null #seed random generators
+  deterministic: False #use deterministic torch
+  device: auto #device type
+  log_step: 100 #steps between logging
+  

@@ -1,0 +1,81 @@
+"""
+Template module, may used without changes
+"""
+import warnings
+
+import hydra
+import torch
+from hydra.utils import instantiate
+from omegaconf import DictConfig, OmegaConf
+from src.utils.init_utils import set_determinisic, set_random_seed, setup_saving_and_logging
+from src.datasets.data_utils import get_dataloaders
+from src.trainer import Trainer
+
+warnings.filterwarnings("ignore", category=UserWarning)
+
+@hydra.main(version_base=None, config_path='src/configs', config_name='train')
+def main(config: DictConfig):
+    """
+    Main for trining. Create and initialize model, optimizer, scheduler, etc.
+    Runs trainer to train and evaluate model.
+
+    Args:
+        config (DictConfig): hydra train config
+    """
+    set_random_seed(config.trainer.seed)
+    if config.trainer.deterministic:
+        set_determinisic()
+    
+    logger = setup_saving_and_logging(config)
+    dict_config = OmegaConf.to_container(config)
+    writer = instantiate(config.writer, logger, dict_config)
+
+    if config.trainer.device == "auto":
+        device = "cuda" if torch.cuda.is_available() else (
+            "mps" if torch.backends.mps.is_available() else "cpu"
+        )
+    else:
+        device = config.trainer.device
+    
+    # setup data_loader instances
+    # batch_transforms should be put on device
+    dataloaders, batch_transforms = get_dataloaders(config, device)
+
+    #build model
+    model = instantiate(config.model).to(device)
+    logger.info(model)
+
+    #build loss and metric
+    loss_function = instantiate(config.loss_function).to(device)
+    metrics = instantiate(config.metrics)
+
+    #build optimizer and lr scheduler
+    trainable_params = filter(lambda p: p.requires_grad, model.parameters())
+    optimizer = instantiate(config.optimizer, params=trainable_params)
+    lr_scheduler = instantiate(config.lr_scheduler, optimizer=optimizer)
+
+    # epoch_len = number of iterations for iteration-based training
+    # epoch_len = None or len(dataloader) for epoch-based training
+    epoch_len = config.trainer.get("epoch_len")
+
+    trainer = Trainer(
+        model=model,
+        criterion=loss_function,
+        metrics=metrics,
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
+        config=config,
+        device=device,
+        dataloaders=dataloaders,
+        epoch_len=epoch_len,
+        logger=logger,
+        writer=writer,
+        batch_transforms=batch_transforms,
+        skip_oom=config.trainer.get("skip_oom", True),
+    )
+    trainer.train()
+
+
+if __name__ == "__main__":
+    from pathlib import Path
+    print(type(Path(Path(__file__))))
