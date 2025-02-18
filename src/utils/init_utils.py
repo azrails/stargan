@@ -1,15 +1,17 @@
-import torch
-import numpy
-import random
-import os
-import string
-import secrets
 import logging
+import os
+import random
+import secrets
 import shutil
-from omegaconf import DictConfig, OmegaConf
-from src.utils.io_utils import ROOT_PATH
+import string
 from pathlib import Path
+
+import numpy
+import torch
+from omegaconf import DictConfig, OmegaConf
+
 from src.logger.logger import setup_logging
+from src.utils.io_utils import ROOT_PATH
 
 
 def set_random_seed(seed: int) -> None:
@@ -22,7 +24,8 @@ def set_random_seed(seed: int) -> None:
     torch.manual_seed(seed)
     numpy.random.seed(seed)
     random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = seed
+    os.environ["PYTHONHASHSEED"] = seed
+
 
 def set_determinisic() -> None:
     """
@@ -31,6 +34,7 @@ def set_determinisic() -> None:
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     torch.use_deterministic_algorithms(True)
+
 
 def set_worker_seed(worker_id: int) -> None:
     """
@@ -60,6 +64,7 @@ def generate_id(length: int = 8) -> str:
     alphabet = string.ascii_lowercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
+
 def resume_training(save_dir: Path) -> str:
     """
     Load run_id from config file
@@ -72,8 +77,9 @@ def resume_training(save_dir: Path) -> str:
     """
     config = OmegaConf.load(save_dir, "config.yaml")
     run_id = config.writer.run_id
-    print(f'Resuming training from run {run_id}...')
+    print(f"Resuming training from run {run_id}...")
     return run_id
+
 
 def saving_init(save_dir: Path, config: DictConfig) -> None:
     """_summary_
@@ -90,19 +96,20 @@ def saving_init(save_dir: Path, config: DictConfig) -> None:
         if config.trainer.get("resume_from") is not None:
             run_id = resume_training(save_dir)
         elif config.trainer.override:
-            print(f'Overriding save directory {save_dir}...')
+            print(f"Overriding save directory {save_dir}...")
             shutil.rmtree(save_dir)
         else:
             raise ValueError(
                 "Save directory already exist. Set override=True or change path/name"
-                )
+            )
     save_dir.mkdir(exist_ok=True, parents=True)
 
     if run_id is None:
         run_id = generate_id(config.writer.id_length)
-    
+
     config.writer.run_id = run_id
     OmegaConf.save(config, save_dir / "config.yaml")
+
 
 def setup_saving_and_logging(config: DictConfig) -> logging.Logger:
     """
@@ -124,5 +131,3 @@ def setup_saving_and_logging(config: DictConfig) -> logging.Logger:
     logger = logging.getLogger("train")
     logger.setLevel(logging.DEBUG)
     return logger
-
-

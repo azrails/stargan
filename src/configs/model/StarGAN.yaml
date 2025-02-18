@@ -1,1 +1,39 @@
-input: 10
+num_domains: 2
+embedding_size: 64
+
+model:
+  __target__: src.model.StarGAN
+  Generator:
+    - __target__: src.model.Generator
+      scale_factor: 2
+      downsampling_block_size_expand: 3
+      downsampling_block_size_no_expand: 2
+      middle_block_size: 4
+      initial_hidden_channels: 64
+      embedding_dim: ${embedding_size}
+  MappingNetwork:
+    - __target__: src.model.MappingNetwork
+      latent_dim: 16
+      hidden_dim: 512
+      embedding_dim: ${embedding_size}
+      shared_size: 4
+      unshared_size: 4
+      domains: ${num_domains}
+  StyleEncoder:
+    - __target__: src.model.ResNet
+      scale_factor: 2
+      downsampling_block_size_expand: 3
+      downsampling_block_size_no_expand: 3
+      initial_hidden_channels: 64
+      out_dim: ${embedding_size}
+      domains: ${num_domains}
+      compression_kernel: 4 #kernel size for final linearization, needed hand calculation. exmple: 4x4x512 -> 1x1x512
+  Decoder:
+    - __target__: src.model.ResNet
+      scale_factor: 2
+      downsampling_block_size_expand: 3
+      downsampling_block_size_no_expand: 3
+      initial_hidden_channels: 64
+      out_dim: 1
+      domains: ${num_domains}
+      compression_kernel: 4 #kernel size for final linearization, needed hand calculation. exmple: 4x4x512 -> 1x1x512

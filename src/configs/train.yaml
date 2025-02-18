@@ -7,4 +7,6 @@ trainer:
   deterministic: False #use deterministic torch
   device: auto #device type
   log_step: 100 #steps between logging
-  
+  save_dir: expiriments
+  run_id: null
+  override: False

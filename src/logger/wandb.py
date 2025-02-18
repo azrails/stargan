@@ -1,27 +1,30 @@
 """
 Template module, may used without changes
 """
-from datetime import datetime
+
 import logging
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
+
 
 class WandBWriter:
     """
     Class for expirement tracking
     """
+
     def __init__(
-            self,
-            logger:logging.Logger,
-            project_config:dict,
-            project_name:str,
-            entity:str|None = None,
-            run_id:str|None = None,
-            run_name:str|None = None,
-            mode:str ="online",
-            **kwargs
-            ):
+        self,
+        logger: logging.Logger,
+        project_config: dict,
+        project_name: str,
+        entity: str | None = None,
+        run_id: str | None = None,
+        run_name: str | None = None,
+        mode: str = "online",
+        **kwargs,
+    ):
         """
         API key is expected to be provided by the user in the terminal.
 
@@ -155,7 +158,8 @@ class WandBWriter:
             caption (str): caption to the image
         """
         self.wandb.log(
-            {self._object_name(image_name): self.wandb.Image(image, caption=caption)}, step=self.step
+            {self._object_name(image_name): self.wandb.Image(image, caption=caption)},
+            step=self.step,
         )
 
     def add_histogram(self, hist_name, values_for_hist, bins=None):

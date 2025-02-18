@@ -1,15 +1,13 @@
 """
 Template module, may used without changes
 """
+
 import logging
 import random
 from typing import List
 
 import torch
 from torch.utils.data import Dataset
-
-logger = logging.getLogger(__name__)
-
 
 class BaseDataset(Dataset):
     """
@@ -128,9 +126,7 @@ class BaseDataset(Dataset):
                 required metadata information, such as label and object path.
         """
         # Filter logic
-        raise NotImplementedError(
-            "Filter method not implemented see source code"
-            )
+        raise NotImplementedError("Filter method not implemented see source code")
 
     @staticmethod
     def _assert_index_is_valid(index):
@@ -144,12 +140,9 @@ class BaseDataset(Dataset):
                 such as label and object path.
         """
         for entry in index:
-            assert "path" in entry, (
-                "Each dataset item should include field 'path'"
-            )
+            assert "path" in entry, "Each dataset item should include field 'path'"
             assert "label" in entry, (
-                "Each dataset item should include field 'label'"
-                " - target labels."
+                "Each dataset item should include field 'label'" " - target labels."
             )
 
     @staticmethod

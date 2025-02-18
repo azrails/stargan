@@ -1,12 +1,16 @@
 """
 Template module, may used without changes
 """
+
 from itertools import repeat
-from torch.utils.data.dataloader import DataLoader
 from typing import Callable
+
 from hydra.utils import instantiate
 from omegaconf import DictConfig
+from torch.utils.data.dataloader import DataLoader
+
 from src.utils.init_utils import set_worker_seed
+
 
 def inf_loop(dataloader):
     """
@@ -19,9 +23,10 @@ def inf_loop(dataloader):
     for loader in repeat(dataloader):
         yield from loader
 
+
 def move_batch_transforms_to_device(
-        batch_transforms: dict[Callable]|None, device:str
-        ) -> None:
+    batch_transforms: dict[Callable] | None, device: str
+) -> None:
     """
     Move batch_transforms to device.
 
@@ -45,9 +50,10 @@ def move_batch_transforms_to_device(
             for transform_name in transforms.keys():
                 transforms[transform_name] = transforms[transform_name].to(device)
 
+
 def get_dataloaders(
-        config: DictConfig, device: str
-        ) -> tuple[dict[DataLoader], dict[Callable]|None]:
+    config: DictConfig, device: str
+) -> tuple[dict[DataLoader], dict[Callable] | None]:
     """
     Create dataloaders for each of the dataset partitions.
     Also creates instance and batch transforms.

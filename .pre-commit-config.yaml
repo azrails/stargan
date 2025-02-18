@@ -23,13 +23,13 @@ repos:
     hooks:
       - id: isort
         args: [ "--profile", "black", "--filter-files" ]
-  - repo: https://github.com/PyCQA/flake8
-    rev: master
-    hooks:
-      - id: flake8
   - repo: https://github.com/econchick/interrogate
     rev: master
     hooks:
       - id: interrogate
         args: [--quiet, --fail-under=70]
         pass_filenames: false
+  - repo: https://github.com/PyCQA/flake8
+    rev: main
+    hooks:
+      - id: flake8

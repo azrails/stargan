@@ -1,19 +1,27 @@
 """
 Template module, may used without changes
 """
+
 import warnings
 
 import hydra
 import torch
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
-from src.utils.init_utils import set_determinisic, set_random_seed, setup_saving_and_logging
+
 from src.datasets.data_utils import get_dataloaders
 from src.trainer import Trainer
-
+from src.utils.init_utils import (
+    set_determinisic,
+    set_random_seed,
+    setup_saving_and_logging,
+)
+import os
 warnings.filterwarnings("ignore", category=UserWarning)
 
-@hydra.main(version_base=None, config_path='src/configs', config_name='train')
+os.environ['HYDRA_FULL_ERROR'] = 1
+
+@hydra.main(version_base=None, config_path="src/configs", config_name="train")
 def main(config: DictConfig):
     """
     Main for trining. Create and initialize model, optimizer, scheduler, etc.
@@ -22,34 +30,37 @@ def main(config: DictConfig):
     Args:
         config (DictConfig): hydra train config
     """
-    set_random_seed(config.trainer.seed)
+    if config.trainer.get("seed", None) is not None:
+        set_random_seed(config.trainer.seed)
     if config.trainer.deterministic:
         set_determinisic()
-    
+
     logger = setup_saving_and_logging(config)
     dict_config = OmegaConf.to_container(config)
     writer = instantiate(config.writer, logger, dict_config)
 
     if config.trainer.device == "auto":
-        device = "cuda" if torch.cuda.is_available() else (
-            "mps" if torch.backends.mps.is_available() else "cpu"
+        device = (
+            "cuda"
+            if torch.cuda.is_available()
+            else ("mps" if torch.backends.mps.is_available() else "cpu")
         )
     else:
         device = config.trainer.device
-    
+
     # setup data_loader instances
     # batch_transforms should be put on device
     dataloaders, batch_transforms = get_dataloaders(config, device)
 
-    #build model
+    # build model
     model = instantiate(config.model).to(device)
     logger.info(model)
 
-    #build loss and metric
+    # build loss and metric
     loss_function = instantiate(config.loss_function).to(device)
     metrics = instantiate(config.metrics)
 
-    #build optimizer and lr scheduler
+    # build optimizer and lr scheduler
     trainable_params = filter(lambda p: p.requires_grad, model.parameters())
     optimizer = instantiate(config.optimizer, params=trainable_params)
     lr_scheduler = instantiate(config.lr_scheduler, optimizer=optimizer)
@@ -77,5 +88,4 @@ def main(config: DictConfig):
 
 
 if __name__ == "__main__":
-    from pathlib import Path
-    print(type(Path(Path(__file__))))
+    main()

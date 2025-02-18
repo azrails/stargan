@@ -1,0 +1,20 @@
+model:
+  input: 10
+writer:
+  _target_: src.logger.WandBWriter
+  project_name: StarGAN-v2
+  entity: null
+  run_name: baseline
+  mode: online
+  loss_names:
+  - loss
+  log_checkpoints: false
+  id_length: 8
+trainer:
+  seed: null
+  deterministic: false
+  device: auto
+  log_step: 100
+  save_dir: expiriments
+  run_id: null
+  override: false

@@ -1,14 +1,20 @@
 """
 Template module, may used without changes
 """
+
 import logging
 import logging.config
 from pathlib import Path
+
 from src.utils.io_utils import ROOT_PATH, read_json
 
-def setup_logging(save_dir: Path, log_config:Path|str|None=None, 
-                  default_level:logging._Level=logging.INFO, 
-                  append:bool=False) -> None:
+
+def setup_logging(
+    save_dir: Path,
+    log_config: Path | str | None = None,
+    default_level: int|str = logging.INFO,
+    append: bool = False,
+) -> None:
     """
     Setup logging configuration
 
@@ -25,8 +31,8 @@ def setup_logging(save_dir: Path, log_config:Path|str|None=None,
         config = read_json(log_config)
         for _, handler in config["handlers"].items():
             if "filename" in handler:
-                handler["filename"] = str(save_dir / handler['filename'])
+                handler["filename"] = str(save_dir / handler["filename"])
         logging.config.dictConfig(config)
     else:
         print(f"Warning: logging configuration file is not found {log_config}...")
-        logging.basicConfig(level=default_level, filemode='a' if append else 'w')
+        logging.basicConfig(level=default_level, filemode="a" if append else "w")

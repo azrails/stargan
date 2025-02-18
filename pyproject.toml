@@ -16,6 +16,7 @@ typer = "^0.15.1"
 wandb = "^0.19.6"
 tqdm = "^4.67.1"
 pandas = "^2.2.3"
+gdown = "^5.2.0"
 
 [tool.poetry.group.test]
 optional = true
