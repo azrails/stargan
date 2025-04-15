@@ -3,6 +3,7 @@ Template module, may used without changes
 """
 
 import logging
+import os
 from datetime import datetime
 
 import numpy as np
@@ -58,6 +59,10 @@ class WandBWriter:
                 save_code=kwargs.get("save_code", False),
             )
             self.wandb = wandb
+            self.gen_img_list = []
+            self.target_labels = []
+            self.real_img_list = []
+            self.real_labels = []
 
         except ImportError:
             logger.warning("For use wandb install it via \n\t poetry add wandb")
@@ -147,7 +152,7 @@ class WandBWriter:
             step=self.step,
         )
 
-    def add_image(self, image_name, image, caption=None):
+    def add_image(self, batch):
         """
         Log an image to the experiment tracker.
 
@@ -157,8 +162,31 @@ class WandBWriter:
                 format.
             caption (str): caption to the image
         """
+        limit = min(10, len(batch["generated_images"]))
+        self.gen_img_list += [
+            img.cpu().numpy().transpose(1, 2, 0)
+            for img in batch["generated_images"][:limit]
+        ]
+        self.target_labels += [label for label in batch["target_labels"][:limit]]
+        self.real_img_list += [
+            img.cpu().numpy().transpose(1, 2, 0) for img in batch["real_images"][:limit]
+        ]
+        self.real_labels += [label for label in batch["real_labels"][:limit]]
+
+        table = self.wandb.Table(
+            columns=["source", "generated", "source domain", "target domain"]
+        )
+        for rimg, gimg, rlabel, tlabel in zip(
+            self.real_img_list[::-1],
+            self.gen_img_list[::-1],
+            self.real_labels[::-1],
+            self.target_labels[::-1],
+        ):
+            table.add_data(
+                self.wandb.Image(rimg), self.wandb.Image(gimg), rlabel, tlabel
+            )
         self.wandb.log(
-            {self._object_name(image_name): self.wandb.Image(image, caption=caption)},
+            {"Generated": table},
             step=self.step,
         )
 

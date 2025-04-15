@@ -75,7 +75,7 @@ def resume_training(save_dir: Path) -> str:
     Returns:
         str: base-36 string with an experiment id.
     """
-    config = OmegaConf.load(save_dir, "config.yaml")
+    config = OmegaConf.load(save_dir / "config.yaml")
     run_id = config.writer.run_id
     print(f"Resuming training from run {run_id}...")
     return run_id
@@ -107,7 +107,9 @@ def saving_init(save_dir: Path, config: DictConfig) -> None:
     if run_id is None:
         run_id = generate_id(config.writer.id_length)
 
+    OmegaConf.set_struct(config, False)
     config.writer.run_id = run_id
+    OmegaConf.set_struct(config, True)
     OmegaConf.save(config, save_dir / "config.yaml")
 
 

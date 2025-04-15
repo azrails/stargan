@@ -1,0 +1,2 @@
+afhq/** filter=lfs diff=lfs merge=lfs -text
+celebahq/** filter=lfs diff=lfs merge=lfs -text

@@ -5,7 +5,7 @@ Template module, may used without changes
 from itertools import repeat
 from typing import Callable
 
-from hydra.utils import instantiate
+from hydra.utils import get_method, instantiate
 from omegaconf import DictConfig
 from torch.utils.data.dataloader import DataLoader
 
@@ -51,9 +51,7 @@ def move_batch_transforms_to_device(
                 transforms[transform_name] = transforms[transform_name].to(device)
 
 
-def get_dataloaders(
-    config: DictConfig, device: str
-) -> tuple[dict[DataLoader], dict[Callable] | None]:
+def get_dataloaders(config: DictConfig, device: str) -> dict[DataLoader]:
     """
     Create dataloaders for each of the dataset partitions.
     Also creates instance and batch transforms.
@@ -69,8 +67,8 @@ def get_dataloaders(
             tensor name.
     """
     # transforms or augmentations init
-    batch_transforms = instantiate(config.transforms.batch_transforms)
-    move_batch_transforms_to_device(batch_transforms, device)
+    # batch_transforms = instantiate(config.transforms.batch_transforms)
+    # move_batch_transforms_to_device(batch_transforms, device)
 
     # dataset partitions init
     datasets = instantiate(config.datasets)  # instance transforms are defined inside
@@ -80,18 +78,20 @@ def get_dataloaders(
     for dataset_partition in config.datasets.keys():
         dataset = datasets[dataset_partition]
 
-        assert config.dataloader.batch_size <= len(dataset), (
-            f"The batch size ({config.dataloader.batch_size}) cannot "
+        assert config.dataloader[dataset_partition].batch_size <= len(dataset), (
+            f"The batch size ({config.dataloader[dataset_partition].batch_size}) cannot "
             f"be larger than the dataset length ({len(dataset)})"
         )
-
+        sampler = None
+        if config.balanced:
+            sampler = dataset.get_balanced_sampler()
         partition_dataloader = instantiate(
-            config.dataloader,
+            config.dataloader[dataset_partition],
+            collate_fn=get_method(config.dataloader[dataset_partition].collate_fn),
             dataset=dataset,
-            drop_last=(dataset_partition == "train"),
-            shuffle=(dataset_partition == "train"),
             worker_init_fn=set_worker_seed,
+            sampler=sampler,
         )
         dataloaders[dataset_partition] = partition_dataloader
 
-    return dataloaders, batch_transforms
+    return dataloaders

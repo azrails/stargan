@@ -1,12 +1,11 @@
 from abc import abstractmethod
 
 import torch
-from numpy import inf
-from torch.nn.utils import clip_grad_norm_
 from tqdm.auto import tqdm
 
 from src.datasets.data_utils import inf_loop
 from src.metrics.tracker import MetricTracker
+from src.model.ema import EMA
 from src.utils.io_utils import ROOT_PATH
 
 
@@ -21,15 +20,12 @@ class BaseTrainer:
         criterion,
         metrics,
         optimizer,
-        lr_scheduler,
+        # lr_scheduler,
         config,
         device,
         dataloaders,
         logger,
         writer,
-        epoch_len=None,
-        skip_oom=True,
-        batch_transforms=None,
     ):
         """
         Args:
@@ -56,61 +52,71 @@ class BaseTrainer:
                 tensor name.
         """
         self.is_train = True
+        self.discriminator_steps = (
+            config.trainer.discriminator_steps
+            if config.trainer.discriminator_steps is not None
+            else 1
+        )
 
         self.config = config
         self.cfg_trainer = self.config.trainer
 
         self.device = device
-        self.skip_oom = skip_oom
 
         self.logger = logger
         self.log_step = config.trainer.get("log_step", 50)
 
-        self.model = model
-        self.criterion = criterion
         self.optimizer = optimizer
-        self.lr_scheduler = lr_scheduler
-        self.batch_transforms = batch_transforms
+        # self.lr_scheduler = lr_scheduler
+        # self.batch_transforms = batch_transforms
 
         # define dataloaders
         self.train_dataloader = dataloaders["train"]
-        if epoch_len is None:
-            # epoch-based training
-            self.epoch_len = len(self.train_dataloader)
-        else:
-            # iteration-based training
-            self.train_dataloader = inf_loop(self.train_dataloader)
-            self.epoch_len = epoch_len
-
-        self.evaluation_dataloaders = {
-            k: v for k, v in dataloaders.items() if k != "train"
-        }
+        self.reference_dataloader = inf_loop(dataloaders["reference"])
+        self.epoch_len = len(self.train_dataloader)
+        self.evaluation_dataloader = dataloaders["val"]
+        self.model = model
+        self.criterion = criterion
+        self.criterion["generator_loss"].set_steps(self.epoch_len)
+        if device == "cuda":
+            self.model.generator = torch.compile(self.model.generator)
+            self.model.mapping_network = torch.compile(self.model.mapping_network)
+            self.model.style_encoder = torch.compile(self.model.style_encoder)
+            self.criterion["generator_loss"] = torch.compile(
+                self.criterion["generator_loss"]
+            )
 
         # define epochs
         self._last_epoch = 0  # required for saving on interruption
         self.start_epoch = 1
         self.epochs = self.cfg_trainer.n_epochs
 
+        self.ema_step = config.get("ema_step", None)
+        if self.ema_step is not None:
+            self.gema = EMA(
+                self.model.generator,
+                config.initial_decay,
+                config.final_decay,
+                self.epochs,
+            )
+            self.fema = EMA(
+                self.model.mapping_network,
+                config.initial_decay,
+                config.final_decay,
+                self.epochs,
+            )
+            self.eema = EMA(
+                self.model.style_encoder,
+                config.initial_decay,
+                config.final_decay,
+                self.epochs,
+            )
+
         # configuration to monitor model performance and save best
 
         self.save_period = (
             self.cfg_trainer.save_period
         )  # checkpoint each save_period epochs
-        self.monitor = self.cfg_trainer.get(
-            "monitor", "off"
-        )  # format: "mnt_mode mnt_metric"
-
-        if self.monitor == "off":
-            self.mnt_mode = "off"
-            self.mnt_best = 0
-        else:
-            self.mnt_mode, self.mnt_metric = self.monitor.split()
-            assert self.mnt_mode in ["min", "max"]
-
-            self.mnt_best = inf if self.mnt_mode == "min" else -inf
-            self.early_stop = self.cfg_trainer.get("early_stop", inf)
-            if self.early_stop <= 0:
-                self.early_stop = inf
 
         # setup visualization writer instance
         self.writer = writer
@@ -120,12 +126,15 @@ class BaseTrainer:
         self.train_metrics = MetricTracker(
             *self.config.writer.loss_names,
             "grad_norm",
+            "g_grad_norm",
+            "e_grad_norm",
+            "f_grad_norm",
+            "d_grad_norm",
             *[m.name for m in self.metrics["train"]],
             writer=self.writer,
         )
         self.evaluation_metrics = MetricTracker(
-            *self.config.writer.loss_names,
-            *[m.name for m in self.metrics["inference"]],
+            *[m.name for m in self.metrics["eval"]],
             writer=self.writer,
         )
 
@@ -136,7 +145,7 @@ class BaseTrainer:
         )
 
         if config.trainer.get("resume_from") is not None:
-            resume_path = self.checkpoint_dir / config.trainer.resume_from
+            resume_path = self.checkpoint_dir / str(config.trainer.resume_from)
             self._resume_checkpoint(resume_path)
 
         if config.trainer.get("from_pretrained") is not None:
@@ -161,10 +170,13 @@ class BaseTrainer:
         and monitoring the performance improvement (for early stopping
         and saving the best checkpoint).
         """
-        not_improved_count = 0
         for epoch in range(self.start_epoch, self.epochs + 1):
             self._last_epoch = epoch
             result = self._train_epoch(epoch)
+            if self.ema_step:
+                self.eema.update_decay()
+                self.fema.update_decay()
+                self.gema.update_decay()
 
             # save logged information into logs dict
             logs = {"epoch": epoch}
@@ -176,15 +188,8 @@ class BaseTrainer:
 
             # evaluate model performance according to configured metric,
             # save best checkpoint as model_best
-            best, stop_process, not_improved_count = self._monitor_performance(
-                logs, not_improved_count
-            )
-
-            if epoch % self.save_period == 0 or best:
-                self._save_checkpoint(epoch, save_best=best, only_best=True)
-
-            if stop_process:  # early_stop
-                break
+            if epoch % self.save_period == 0:
+                self._save_checkpoint(epoch)
 
     def _train_epoch(self, epoch):
         """
@@ -205,32 +210,29 @@ class BaseTrainer:
         for batch_idx, batch in enumerate(
             tqdm(self.train_dataloader, desc="train", total=self.epoch_len)
         ):
-            try:
-                batch = self.process_batch(
-                    batch,
-                    metrics=self.train_metrics,
-                )
-            except torch.cuda.OutOfMemoryError as e:
-                if self.skip_oom:
-                    self.logger.warning("OOM on batch. Skipping batch.")
-                    torch.cuda.empty_cache()  # free some memory
-                    continue
-                else:
-                    raise e
-
-            self.train_metrics.update("grad_norm", self._get_grad_norm())
-
+            batch = self.process_batch(
+                batch,
+                self.train_metrics,
+                next(self.reference_dataloader),
+            )
+            self.train_metrics.update("grad_norm", self._get_grad_norm(self.model))
             # log current results
+            if self.ema_step and batch_idx % self.ema_step == 0:
+                self.eema.update()
+                self.fema.update()
+                self.gema.update()
             if batch_idx % self.log_step == 0:
                 self.writer.set_step((epoch - 1) * self.epoch_len + batch_idx)
                 self.logger.debug(
-                    "Train Epoch: {} {} Loss: {:.6f}".format(
-                        epoch, self._progress(batch_idx), batch["loss"].item()
+                    "Train Epoch: {} {} GLoss: {:.6f} DLoss: {:.6f}".format(
+                        epoch,
+                        self._progress(batch_idx),
+                        batch["generator_loss"],
+                        batch["discriminator_loss"],
                     )
                 )
-                self.writer.add_scalar(
-                    "learning rate", self.lr_scheduler.get_last_lr()[0]
-                )
+                for met in self.metrics["train"]:
+                    self.train_metrics.update(met.name, met.compute())
                 self._log_scalars(self.train_metrics)
                 self._log_batch(batch_idx, batch)
                 # we don't want to reset train metrics at the start of every epoch
@@ -239,13 +241,13 @@ class BaseTrainer:
                 self.train_metrics.reset()
             if batch_idx + 1 >= self.epoch_len:
                 break
-
         logs = last_train_metrics
 
         # Run val/test
-        for part, dataloader in self.evaluation_dataloaders.items():
-            val_logs = self._evaluation_epoch(epoch, part, dataloader)
-            logs.update(**{f"{part}_{name}": value for name, value in val_logs.items()})
+        val_logs = self._evaluation_epoch(
+            epoch, "evaluation", self.evaluation_dataloader
+        )
+        logs.update(**{f"evaluation_{name}": value for name, value in val_logs.items()})
 
         return logs
 
@@ -260,6 +262,10 @@ class BaseTrainer:
         Returns:
             logs (dict): logs that contain the information about evaluation.
         """
+        if self.ema_step:
+            self.eema.apply()
+            self.fema.apply()
+            self.gema.apply()
         self.is_train = False
         self.model.eval()
         self.evaluation_metrics.reset()
@@ -274,117 +280,20 @@ class BaseTrainer:
                     metrics=self.evaluation_metrics,
                 )
             self.writer.set_step(epoch * self.epoch_len, part)
+            for met in self.metrics["eval"]:
+                self.evaluation_metrics.update(met.name, met.compute())
             self._log_scalars(self.evaluation_metrics)
             self._log_batch(
                 batch_idx, batch, part
             )  # log only the last batch during inference
-
+        if self.ema_step:
+            self.gema.restore()
+            self.fema.restore()
+            self.eema.restore()
         return self.evaluation_metrics.result()
 
-    def _monitor_performance(self, logs, not_improved_count):
-        """
-        Check if there is an improvement in the metrics. Used for early
-        stopping and saving the best checkpoint.
-
-        Args:
-            logs (dict): logs after training and evaluating the model for
-                an epoch.
-            not_improved_count (int): the current number of epochs without
-                improvement.
-        Returns:
-            best (bool): if True, the monitored metric has improved.
-            stop_process (bool): if True, stop the process (early stopping).
-                The metric did not improve for too much epochs.
-            not_improved_count (int): updated number of epochs without
-                improvement.
-        """
-        best = False
-        stop_process = False
-        if self.mnt_mode != "off":
-            try:
-                # check whether model performance improved or not,
-                # according to specified metric(mnt_metric)
-                if self.mnt_mode == "min":
-                    improved = logs[self.mnt_metric] <= self.mnt_best
-                elif self.mnt_mode == "max":
-                    improved = logs[self.mnt_metric] >= self.mnt_best
-                else:
-                    improved = False
-            except KeyError:
-                self.logger.warning(
-                    f"Warning: Metric '{self.mnt_metric}' is not found. "
-                    "Model performance monitoring is disabled."
-                )
-                self.mnt_mode = "off"
-                improved = False
-
-            if improved:
-                self.mnt_best = logs[self.mnt_metric]
-                not_improved_count = 0
-                best = True
-            else:
-                not_improved_count += 1
-
-            if not_improved_count >= self.early_stop:
-                self.logger.info(
-                    "Validation performance didn't improve for {} epochs. "
-                    "Training stops.".format(self.early_stop)
-                )
-                stop_process = True
-        return best, stop_process, not_improved_count
-
-    def move_batch_to_device(self, batch):
-        """
-        Move all necessary tensors to the device.
-
-        Args:
-            batch (dict): dict-based batch containing the data from
-                the dataloader.
-        Returns:
-            batch (dict): dict-based batch containing the data from
-                the dataloader with some of the tensors on the device.
-        """
-        for tensor_for_device in self.cfg_trainer.device_tensors:
-            batch[tensor_for_device] = batch[tensor_for_device].to(self.device)
-        return batch
-
-    def transform_batch(self, batch):
-        """
-        Transforms elements in batch. Like instance transform inside the
-        BaseDataset class, but for the whole batch. Improves pipeline speed,
-        especially if used with a GPU.
-
-        Each tensor in a batch undergoes its own transform defined by the key.
-
-        Args:
-            batch (dict): dict-based batch containing the data from
-                the dataloader.
-        Returns:
-            batch (dict): dict-based batch containing the data from
-                the dataloader (possibly transformed via batch transform).
-        """
-        # do batch transforms on device
-        transform_type = "train" if self.is_train else "inference"
-        transforms = self.batch_transforms.get(transform_type)
-        if transforms is not None:
-            for transform_name in transforms.keys():
-                batch[transform_name] = transforms[transform_name](
-                    batch[transform_name]
-                )
-        return batch
-
-    def _clip_grad_norm(self):
-        """
-        Clips the gradient norm by the value defined in
-        config.trainer.max_grad_norm
-        """
-        if self.config["trainer"].get("max_grad_norm", None) is not None:
-            clip_grad_norm_(
-                self.model.parameters(), self.config["trainer"]["max_grad_norm"]
-            )
-
     @torch.no_grad()
-    def _get_grad_norm(self, norm_type=2):
+    def _get_grad_norm(self, model, norm_type=2):
         """
         Calculates the gradient norm for logging.
 
@@ -393,7 +302,7 @@ class BaseTrainer:
         Returns:
             total_norm (float): the calculated norm.
         """
-        parameters = self.model.parameters()
+        parameters = model.parameters()
         if isinstance(parameters, torch.Tensor):
             parameters = [parameters]
         parameters = [p for p in parameters if p.grad is not None]
@@ -467,11 +376,20 @@ class BaseTrainer:
             "arch": arch,
             "epoch": epoch,
             "state_dict": self.model.state_dict(),
-            "optimizer": self.optimizer.state_dict(),
-            "lr_scheduler": self.lr_scheduler.state_dict(),
-            "monitor_best": self.mnt_best,
+            "optimizer": {
+                optimizer_name: optimizer.state_dict()
+                for optimizer_name, optimizer in self.optimizer.items()
+            },
             "config": self.config,
         }
+        if self.ema_step is not None:
+            state.update(
+                {
+                    "eema_weights": self.eema.ema_weights,
+                    "gema_weights": self.gema.ema_weights,
+                    "fema_weights": self.fema.ema_weights,
+                }
+            )
         filename = str(self.checkpoint_dir / f"checkpoint-epoch{epoch}.pth")
         if not (only_best and save_best):
             torch.save(state, filename)
@@ -499,9 +417,8 @@ class BaseTrainer:
         """
         resume_path = str(resume_path)
         self.logger.info(f"Loading checkpoint: {resume_path} ...")
-        checkpoint = torch.load(resume_path, self.device)
+        checkpoint = torch.load(resume_path, self.device, weights_only=False)
         self.start_epoch = checkpoint["epoch"] + 1
-        self.mnt_best = checkpoint["monitor_best"]
 
         # load architecture params from checkpoint.
         if checkpoint["config"]["model"] != self.config["model"]:
@@ -513,8 +430,9 @@ class BaseTrainer:
 
         # load optimizer state from checkpoint only when optimizer type is not changed.
         if (
-            checkpoint["config"]["optimizer"] != self.config["optimizer"]
-            or checkpoint["config"]["lr_scheduler"] != self.config["lr_scheduler"]
+            checkpoint["config"]["optimizer"]
+            != self.config["optimizer"]
+            # or checkpoint["config"]["lr_scheduler"] != self.config["lr_scheduler"]
         ):
             self.logger.warning(
                 "Warning: Optimizer or lr_scheduler given in the config file is different "
@@ -522,8 +440,25 @@ class BaseTrainer:
                 "are not resumed."
             )
         else:
-            self.optimizer.load_state_dict(checkpoint["optimizer"])
-            self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+            for optim_name in self.optimizer.keys():
+                self.optimizer[optim_name].load_state_dict(
+                    checkpoint["optimizer"][optim_name]
+                )
+        if self.ema_step is not None:
+            if checkpoint.get("gema_weights", None) is None:
+                self.gema.from_pretrained(checkpoint["epoch"])
+                self.fema.from_pretrained(checkpoint["epoch"])
+                self.eema.from_pretrained(checkpoint["epoch"])
+            else:
+                self.gema.from_pretrained(
+                    checkpoint["epoch"], checkpoint["gema_weights"]
+                )
+                self.fema.from_pretrained(
+                    checkpoint["epoch"], checkpoint["fema_weights"]
+                )
+                self.eema.from_pretrained(
+                    checkpoint["epoch"], checkpoint["eema_weights"]
+                )
 
         self.logger.info(
             f"Checkpoint loaded. Resume training from epoch {self.start_epoch}"

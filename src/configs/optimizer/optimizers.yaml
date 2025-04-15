@@ -1,0 +1,27 @@
+g_optimizer:
+  _target_: torch.optim.Adam
+  lr: 1e-4
+  betas: ${betas}
+  fused: true
+  weight_decay: 1e-4
+
+e_optimizer:
+  _target_: torch.optim.Adam
+  lr: 1e-4
+  betas: ${betas}
+  fused: true
+  weight_decay: 1e-4
+
+d_optimizer:
+  _target_: torch.optim.Adam
+  lr: 5e-5
+  betas: ${betas}
+  fused: true
+  weight_decay: 1e-4
+
+f_optimizer:
+  _target_: torch.optim.Adam
+  lr: 1e-6
+  betas: ${betas}
+  fused: true
+  weight_decay: 1e-4

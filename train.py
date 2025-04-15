@@ -1,7 +1,4 @@
-"""
-Template module, may used without changes
-"""
-
+import os
 import warnings
 
 import hydra
@@ -16,10 +13,13 @@ from src.utils.init_utils import (
     set_random_seed,
     setup_saving_and_logging,
 )
-import os
+
 warnings.filterwarnings("ignore", category=UserWarning)
 
-os.environ['HYDRA_FULL_ERROR'] = 1
+os.environ["HYDRA_FULL_ERROR"] = "1"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+torch.backends.cudnn.benchmark = True
+
 
 @hydra.main(version_base=None, config_path="src/configs", config_name="train")
 def main(config: DictConfig):
@@ -50,39 +50,49 @@ def main(config: DictConfig):
 
     # setup data_loader instances
     # batch_transforms should be put on device
-    dataloaders, batch_transforms = get_dataloaders(config, device)
+    dataloaders = get_dataloaders(config, device)
 
     # build model
-    model = instantiate(config.model).to(device)
+    model = instantiate(config.model.model).to(device)
     logger.info(model)
 
     # build loss and metric
-    loss_function = instantiate(config.loss_function).to(device)
+    loss_function = {
+        loss_name: instantiate(config.loss_function[loss_name]).to(device)
+        for loss_name in config.loss_function.keys()
+    }
+
     metrics = instantiate(config.metrics)
 
     # build optimizer and lr scheduler
-    trainable_params = filter(lambda p: p.requires_grad, model.parameters())
-    optimizer = instantiate(config.optimizer, params=trainable_params)
-    lr_scheduler = instantiate(config.lr_scheduler, optimizer=optimizer)
-
-    # epoch_len = number of iterations for iteration-based training
-    # epoch_len = None or len(dataloader) for epoch-based training
-    epoch_len = config.trainer.get("epoch_len")
+    g_params = list(filter(lambda p: p.requires_grad, model.generator.parameters()))
+    e_params = list(filter(lambda p: p.requires_grad, model.style_encoder.parameters()))
+    f_params = filter(lambda p: p.requires_grad, model.mapping_network.parameters())
+    d_params = filter(lambda p: p.requires_grad, model.discriminator.parameters())
+    optimizers = {}
+    optimizers["g_optimizer"] = instantiate(
+        config.optimizer.g_optimizer, params=g_params
+    )
+    optimizers["e_optimizer"] = instantiate(
+        config.optimizer.e_optimizer, params=e_params
+    )
+    optimizers["f_optimizer"] = instantiate(
+        config.optimizer.f_optimizer, params=f_params
+    )
+    optimizers["d_optimizer"] = instantiate(
+        config.optimizer.d_optimizer, params=d_params
+    )
 
     trainer = Trainer(
         model=model,
         criterion=loss_function,
         metrics=metrics,
-        optimizer=optimizer,
-        lr_scheduler=lr_scheduler,
+        optimizer=optimizers,
         config=config,
         device=device,
         dataloaders=dataloaders,
-        epoch_len=epoch_len,
         logger=logger,
         writer=writer,
-        batch_transforms=batch_transforms,
-        skip_oom=config.trainer.get("skip_oom", True),
     )
     trainer.train()
 
