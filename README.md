@@ -51,6 +51,7 @@ poetry install
 ```
 
 ## Usage
+**Checkpoints link** [`dropbox`](https://www.dropbox.com/scl/fi/kubwfunvjimat9izxu7sy/checkpoints.zip?rlkey=9n50j647bk9j4ahrh9aa6ysta&st=ikrl33xi&dl=0)
 For examples see [`notebook`](/notbooks/examples.ipynb)
 
 ## Credits
