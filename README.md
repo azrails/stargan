@@ -20,6 +20,13 @@
 This repository contains an implementation of [StarGAN v2](https://arxiv.org/abs/1912.01865) with a modified loss inspired by ideas from the paper [The GAN is dead; long live the GAN! A Modern GAN Baseline](https://arxiv.org/abs/2501.05441). The project is built using pure PyTorch and aims to enhance GAN training stability and improve the quality of generated images through modern loss formulations.
 
 ## Examples
+__dog + cheetah__
+
+![dog + cheetah](imgs/1.png)
+
+__cat + cheetah__
+
+![cat + cheetah](imgs/2.png)
 
 
 ## 🔥 Overview  <span id="overview"></span>
